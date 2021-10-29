@@ -22,6 +22,7 @@ import base64
 import codecs
 from collections import namedtuple, OrderedDict
 from configparser import ConfigParser
+from contextlib import contextmanager
 import eib
 from eibostree import fetch_remote_collection_id
 import fnmatch
@@ -149,7 +150,7 @@ class FlatpakRemote(object):
     def __init__(self, manager, name, url=None, deploy_url=None,
                  repo_file=None, apps=None, runtimes=None, exclude=None,
                  allow_extra_data=None, title=None, default_branch=None,
-                 **extra_options):
+                 prio=None, noenumerate=None, **extra_options):
         # Copy some manager attributes
         self.manager = manager
         self.installation = manager.installation
@@ -167,6 +168,8 @@ class FlatpakRemote(object):
             if allow_extra_data else set()
         self.title = title
         self.default_branch = default_branch
+        self.prio = prio
+        self.noenumerate = noenumerate
 
         # Only supported from repo_file
         self.gpg_key = None
@@ -233,6 +236,10 @@ class FlatpakRemote(object):
             remote.set_title(self.title)
         if self.default_branch:
             remote.set_default_branch(self.default_branch)
+        if self.prio is not None:
+            remote.set_prio(self.prio)
+        if self.noenumerate is not None:
+            remote.set_noenumerate(self.noenumerate)
 
         # Import the GPG key if specified
         if self.gpg_key:
@@ -344,7 +351,25 @@ class FlatpakRemote(object):
             remote.set_title(self.title)
         if self.default_branch:
             remote.set_default_branch(self.default_branch)
+        if self.prio is not None:
+            remote.set_prio(self.prio)
+        if self.noenumerate is not None:
+            remote.set_noenumerate(self.noenumerate)
         self.installation.modify_remote(remote)
+
+    @contextmanager
+    def _allow_enumerate(self):
+        if not self.noenumerate:
+            yield
+        else:
+            remote = self.installation.get_remote_by_name(self.name)
+            try:
+                remote.set_noenumerate(False)
+                self.installation.modify_remote(remote)
+                yield
+            finally:
+                remote.set_noenumerate(self.noenumerate)
+                self.installation.modify_remote(remote)
 
     def enumerate(self):
         """Populate refs from remote data
@@ -353,8 +378,9 @@ class FlatpakRemote(object):
         app or runtime found.
         """
         logger.info('Fetching refs for %s', self.name)
-        all_remote_refs = eib.retry(
-            self.installation.list_remote_refs_sync, self.name)
+        with self._allow_enumerate():
+            all_remote_refs = eib.retry(
+                self.installation.list_remote_refs_sync, self.name)
         for remote_ref in all_remote_refs:
             # Get the full ostree ref
             ref = remote_ref.format_ref()
@@ -543,6 +569,11 @@ class FlatpakManager(object):
             # FlatpakRemote after removing unrecognized options
             remote_options = dict(self.config.items(sect))
             remote_options.pop('enable', None)
+            # Convert prio and noenumerate to the appropriate types
+            remote_options['prio'] = self.config.getint(
+                sect, 'prio', fallback=None)
+            remote_options['noenumerate'] = self.config.getboolean(
+                sect, 'noenumerate', fallback=None)
             logger.debug('Remote %s options: %s', name, remote_options)
             self.remotes[name] = FlatpakRemote(self, name,
                                                **remote_options)
