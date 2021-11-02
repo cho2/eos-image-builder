@@ -1,0 +1,3 @@
+TARGET_PATH="${OSTREE_DEPLOYMENT}/usr/local/share/desktop-directories"
+mkdir -p ${TARGET_PATH}
+cp -v ${EIB_LOCALDATADIR}/icon-grid/eosimpact/*.directory ${TARGET_PATH}
